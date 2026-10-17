@@ -4,16 +4,24 @@
 # Target eBPF Kernel Defense:
 #   - [Method 04] Invalid TCP Flags Dropped (STAT_DROPPED_TCP_FLAGS)
 #   - Detects: Null scan, Xmas scan, SYN-FIN, SYN-RST, FIN without ACK
+# Chạy liên tục không giới hạn thời gian (Nhấn Ctrl+C để dừng)
 # ==============================================================================
 set -euo pipefail
 
 TARGET_IP="${1:-172.30.0.101}"
 TARGET_PORT="${2:-80}"
-COUNT="${3:-50}"
+
+cleanup() {
+    echo -e "\n[✓] Đã dừng Test 02 (Invalid TCP Flags)."
+    kill 0 2>/dev/null || true
+    exit 0
+}
+trap cleanup INT TERM
 
 echo "======================================================================"
 echo "[*] TEST 02: Invalid TCP Flags & Anomalous Flag Combinations"
-echo "[*] Target: ${TARGET_IP}:${TARGET_PORT} | Count per sub-test: ${COUNT}"
+echo "[*] Target: ${TARGET_IP}:${TARGET_PORT}"
+echo "[*] Chế độ: TỰ ĐỘNG LIÊN TỤC (Nhấn Ctrl+C để dừng bất kỳ lúc nào)"
 echo "[!] Expected Kernel Firewall Reaction:"
 echo "    -> Method 04: Drop invalid TCP flag headers at XDP driver level"
 echo "    -> Counter to monitor on Kernel: STAT_DROPPED_TCP_FLAGS"
@@ -24,25 +32,16 @@ if ! command -v hping3 &>/dev/null; then
     exit 1
 fi
 
-echo "[>] 1. Null Scan Attack (Không bật bất kỳ TCP flag nào - flags = 0)..."
-hping3 -c "$COUNT" -i u10000 -p "$TARGET_PORT" --null "$TARGET_IP" || true
-
-echo ""
-echo "[>] 2. Xmas Scan Attack (Bật đồng thời FIN + URG + PSH)..."
-hping3 -c "$COUNT" -i u10000 -p "$TARGET_PORT" --xmas "$TARGET_IP" || true
-
-echo ""
-echo "[>] 3. Bất thường SYN + FIN (Vừa mở kết nối vừa đóng kết nối cùng lúc)..."
-hping3 -c "$COUNT" -i u10000 -p "$TARGET_PORT" -S -F "$TARGET_IP" || true
-
-echo ""
-echo "[>] 4. Bất thường SYN + RST (Vừa yêu cầu kết nối vừa Reset kết nối)..."
-hping3 -c "$COUNT" -i u10000 -p "$TARGET_PORT" -S -R "$TARGET_IP" || true
-
-echo ""
-echo "[>] 5. FIN đơn lẻ không có ACK (Vi phạm giao thức TCP State)..."
-hping3 -c "$COUNT" -i u10000 -p "$TARGET_PORT" -F "$TARGET_IP" || true
-
-echo ""
-echo "[✓] Hoàn tất Test 02. Đếm số lượng gói bị drop:"
-echo "    sudo ./build/aegis-fw stats | grep -i 'TCP Flags'"
+echo "[>] Đang xoay vòng phát liên tục các loại cờ TCP dị tật (Null, Xmas, SYN-FIN, SYN-RST, FIN)..."
+while true; do
+    # 1. Null Scan (flags = 0)
+    hping3 -c 20 -i u2000 -p "$TARGET_PORT" "$TARGET_IP" 2>/dev/null || true
+    # 2. Xmas Scan (FIN + URG + PSH)
+    hping3 -c 20 -i u2000 -p "$TARGET_PORT" -F -P -U "$TARGET_IP" 2>/dev/null || true
+    # 3. SYN + FIN
+    hping3 -c 20 -i u2000 -p "$TARGET_PORT" -S -F "$TARGET_IP" 2>/dev/null || true
+    # 4. SYN + RST
+    hping3 -c 20 -i u2000 -p "$TARGET_PORT" -S -R "$TARGET_IP" 2>/dev/null || true
+    # 5. Standalone FIN (no ACK)
+    hping3 -c 20 -i u2000 -p "$TARGET_PORT" -F "$TARGET_IP" 2>/dev/null || true
+done
